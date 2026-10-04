@@ -1,0 +1,3 @@
+greet(name: Text) (message: Text) {
+  message = "Hello, " + name
+}

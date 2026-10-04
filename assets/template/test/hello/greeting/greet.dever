@@ -1,0 +1,4 @@
+greet() () {
+  message = app.greet("Dever")
+  assert_eq(message, "Hello, Dever")
+}

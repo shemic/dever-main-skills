@@ -3,14 +3,12 @@
 
 import argparse
 import hashlib
-import gzip
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import ssl
 import subprocess
-import tarfile
 import tempfile
 import urllib.error
 import urllib.parse
@@ -92,7 +90,9 @@ def authenticate(release, key_path, scratch, platform, requested):
     if verified.returncode:
         raise ValueError("发行签名校验失败，未执行安装程序")
     manifest = json.loads((release / "manifest.json").read_text())
-    if manifest.get("format") != "dever-release-v1" or manifest.get("platform") != platform:
+    if (set(manifest) != {"format", "version", "platform", "artifacts", "extensions"}
+            or manifest.get("format") != "dever-release-v2" or manifest.get("platform") != platform
+            or not isinstance(manifest["extensions"], list) or len(manifest["extensions"]) > 12):
         raise ValueError("发行格式或平台不匹配")
     version = manifest.get("version", "")
     if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
@@ -106,7 +106,9 @@ def authenticate(release, key_path, scratch, platform, requested):
     total = 0
     for artifact in artifacts:
         name, size, digest = artifact["path"], artifact["bytes"], artifact["sha256"]
-        if (not name or any(part in ("", ".", "..") for part in name.split("/"))
+        if (set(artifact) != {"path", "bytes", "sha256"}
+                or not name or name.startswith("/")
+                or any(part in ("", ".", "..") for part in name.split("/"))
                 or any(character in name for character in ("\\", ":", "\0"))
                 or str(PurePosixPath(name)) != name
                 or name in catalog or name in ("manifest.json", "manifest.sig")):
@@ -140,7 +142,7 @@ def copy_artifact(stream, destination, artifact):
     destination.chmod(0o755 if executable else 0o644)
 
 
-def payload(release, source, version, platform, catalog):
+def payload(release, source, version, platform, catalog, trusted_key=None):
     if source:
         for name, artifact in catalog.items():
             path = source / name
@@ -154,43 +156,39 @@ def payload(release, source, version, platform, catalog):
             with path.open("rb") as stream:
                 copy_artifact(stream, release / name, artifact)
         return
-    seen = set()
-    with download(f"{RELEASES}/download/v{version}/dever-{platform}.tar.gz") as stream:
-        with gzip.GzipFile(fileobj=BoundedArchive(stream)) as archive:
-            while True:
-                header = archive.read(512)
-                if header == bytes(512):
-                    trailer = archive.read(10241)
-                    if len(trailer) > 10240 or any(trailer):
-                        raise ValueError("归档包含异常尾部数据")
-                    break
-                if len(header) != 512:
-                    raise ValueError("归档头被截断")
-                member = tarfile.TarInfo.frombuf(header, "utf-8", "strict")
-                if (not member.isfile() or member.name not in catalog
-                        or member.name in seen or member.size != catalog[member.name]["bytes"]):
-                    raise ValueError("归档包含未签名、非普通、重复或长度错误的文件")
-                copy_artifact(archive, release / member.name, catalog[member.name])
-                padding = (512 - member.size % 512) % 512
-                if archive.read(padding) != bytes(padding):
-                    raise ValueError("归档填充错误")
-                seen.add(member.name)
-    if seen != set(catalog):
-        raise ValueError("归档缺少已签名文件")
+    if trusted_key is None:
+        raise ValueError("网络发行解压需要独立信任公钥")
+    # Only signed bytes are executable. Keep the helper separate so Rust can
+    # create_new every archive member and enforce one complete codec/TAR contract.
+    with tempfile.TemporaryDirectory(prefix=".extract-", dir=release.parent) as directory:
+        scratch = Path(directory)
+        helper = scratch / "helper"
+        base = f"{RELEASES}/download/v{version}/dever-{platform}"
+        for name, artifact in catalog.items():
+            if name == "bootstrap/dever" or name.startswith("bootstrap/lib/"):
+                with download(f"{base}.blob-{artifact['sha256']}") as stream:
+                    copy_artifact(stream, helper / name, artifact)
+                    if stream.read(1):
+                        raise ValueError("bootstrap 下载超过签名长度")
+        compressed = scratch / "base.tar.zst"
+        download_archive(f"{base}.tar.zst", compressed)
+        configuration = scratch / "extract.json"
+        configuration.write_text(json.dumps({
+            "release": str(release), "archive": str(compressed),
+            "trusted_key": str(trusted_key),
+        }))
+        subprocess.run([str(helper / "bootstrap/dever"), "--dever-extract", str(configuration)],
+                       env={}, check=True, timeout=180)
 
 
-class BoundedArchive:
-    def __init__(self, stream):
-        self.stream = stream
-        self.remaining = MAX_RELEASE
-
-    def read(self, size=-1):
-        limit = self.remaining + 1 if size < 0 else min(size, self.remaining + 1)
-        contents = self.stream.read(limit)
-        self.remaining -= len(contents)
-        if self.remaining < 0:
-            raise ValueError("发行下载超过 2 GiB")
-        return contents
+def download_archive(address, destination):
+    remaining = MAX_RELEASE
+    with download(address) as stream, destination.open("xb") as output:
+        while contents := stream.read(min(remaining + 1, 1024 * 1024)):
+            remaining -= len(contents)
+            if remaining < 0:
+                raise ValueError("发行下载超过 2 GiB")
+            output.write(contents)
 
 
 def install(arguments):
@@ -213,9 +211,9 @@ def install(arguments):
         release.mkdir()
         metadata(release, source, selection, platform)
         version, catalog, key = authenticate(release, arguments.trusted_key, scratch, platform, arguments.version)
-        payload(release, source, version, platform, catalog)
         trusted = scratch / "release.pub"
         trusted.write_text(key.hex() + "\n")
+        payload(release, source, version, platform, catalog, trusted)
         configuration = scratch / "config"
         configuration.mkdir()
         (configuration / "setting.json").write_text(json.dumps({
@@ -238,7 +236,7 @@ def main():
     arguments = parser.parse_args()
     try:
         install(arguments)
-    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Dever 安装失败：{error}\n")
 
 

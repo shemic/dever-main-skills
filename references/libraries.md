@@ -21,7 +21,9 @@ Package 是可复用 Dever 组件。通过项目 setting.json 中的 `package.re
 
 ## 外部 Lib 与普通二进制
 
-第三方生态叫 Lib。项目 `config/setting.json` 的根 lib 数组声明 `pip:name@version`、`npm:name@version` 或 Go 依赖，使用 `dever lib add/list/update/remove/doctor` 显式准备。run/build 只消费锁，不联网，也不读取系统 Python、Node、Go 或 PATH。
+第三方生态叫 Lib。项目 `config/setting.json` 的根 lib 数组声明 `pip:name@version`、`npm:name@version` 或 Go 依赖，使用 `dever lib add/list/install/update/remove/doctor` 管理。add/update 自动准备实际需要的运行环境与构建工具；install 按已有锁精确恢复，不改变配置或锁。run/build 只消费锁，不联网，也不读取系统 Python、Node、Go 或 PATH。
+
+锁记录原始来源、摘要、固定构建输入和产物。新机器缺少已构建产物时，install 使用固定输入重建并核对输出摘要；第三方构建不能重现相同字节时会明确失败，不能用更新锁或偷偷重新解析版本冒充恢复。检查详细错误后，由用户决定是否执行 update 重新生成锁。
 
 Lib 必须通过领域 Port/Adapter 使用。Port 声明类型与失败合同，Adapter 实现它；App 只调用 Port。声明的类型、返回值、业务失败、超时和 capability 使用统一 Worker 协议，各语言 SDK 不替代编译器类型检查。Python/JS/Go SDK 与可用 runtime 必须匹配 Dever 发行版本。
 

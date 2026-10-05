@@ -36,7 +36,7 @@ Dever 是独立语言。应用不写 Go、Rust，也不沿用 Go Dever 的 servi
 - 函数使用命名输出和互斥、穷尽的相邻分句；没有 `if/else/switch/match/return`、任意循环或递归。不要靠分句顺序隐藏重叠规则。
 - HTTP 默认有权限，匿名入口才写 `public`。不添加 `auth.require`、客户端自报身份/权限或每个 API 重复鉴权。站点按配置里的 API 目录匹配，租户按数据库隔离。
 - 测试放在 `test/<component>/<domain>/<topic>.dever`，入口为文件同名 `topic() ()`。外部调用使用 case-local Port fake，不在普通测试启动真实 Lib 或访问真实业务数据库。
-- `run/build` 离线。依赖准备必须用显式 `dever package` / `dever lib` 命令；不扫描宿主 Python、Node、Go 或 PATH 来充当运行环境。
+- `run/build` 离线。依赖准备使用显式 `dever package` / `dever lib` 命令；已有锁在新机器用 `dever lib install`，ARM 应用目标用 `dever target add linux-aarch64`。这些命令按需准备机器共享资源，不扫描宿主 Python、Node、Go 或 PATH 来充当运行环境。
 
 ## 工作方式
 

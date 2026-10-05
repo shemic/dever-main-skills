@@ -14,7 +14,7 @@ git clone git@github.com:shemic/dever-main-skills.git <AI技能目录>/dever-lan
 
 ## 安装 dever
 
-先检查 `dever --help`。机器版提供 new、install、update、version、skill；仅源码开发二进制不管理机器安装。不要把已有同名命令直接删掉或覆盖，先识别归属。
+先检查 `dever --help`。机器版提供 new、install、update、target、version、skill；仅源码开发二进制不管理机器安装。不要把已有同名命令直接删掉或覆盖，先识别归属。
 
 初次安装需要 Linux、Python 3 和 `/usr/bin/openssl`；它们只用于校验和安装，生成的应用不依赖 Python、Node、Go 或 Rust。检查本 skill 的安装脚本后，由用户授权执行：
 
@@ -24,7 +24,23 @@ git clone git@github.com:shemic/dever-main-skills.git <AI技能目录>/dever-lan
 sudo python3 <skill目录>/scripts/install.py
 ```
 
-该命令下载当前平台最新已签名正式包，校验本 skill 随附的独立发行公钥及每个文件，然后使用发行包既有的机器安装器。安装 `/opt/dever`、`/usr/local/bin/dever`、机器共享服务和必要沙箱策略，默认启动服务。`--no-start` 可仅安装。没有对应正式资产时明确失败，不假装源码仓库就是安装包，也不修改已安装版本。
+该命令下载当前平台最新已签名基础包。先用独立公钥校验发行目录，再验证引导程序及其私有库的摘要，由引导程序解压 Zstandard 包；无需系统 zstd。安装 `/opt/dever`、`/usr/local/bin/dever`、机器共享服务和必要沙箱策略，默认启动服务。`--no-start` 可仅安装。没有对应正式资产时明确失败，不修改已安装版本。
+
+基础包包含 Dever 编译器、本机应用编译资源、四种数据库运行库和配套 skill。Python、Node、Go、第三方原生构建工具与 ARM 应用目标按需安装，保存在机器共享资源目录；同一版本的多个用户和项目共用一份。
+
+## 按需准备资源
+
+首次添加或更新 Lib 时，`dever lib add/update <project-root> ...` 自动准备相应生态，只有进入源码构建流程时才准备构建工具。已有 `dever.lock` 的项目在新机器运行 `dever lib install <project-root>`，按锁恢复依赖，保持配置和锁文件不变；没有 Lib 的 Python/JS/Go Adapter 也可通过该命令准备环境。缺少锁时先显式 `dever lib update <project-root>` 生成锁。不要把 install 当作重新选版本的 update。
+
+在 x86_64 机器准备 ARM64 应用目标：
+
+```sh
+dever target add linux-aarch64
+dever lib install <project-root> --target linux-aarch64
+dever build <project-root> --target linux-aarch64 --output <新文件>
+```
+
+只用 Dever、没有外部依赖的项目省略 lib install。目标 Lib 必须已有匹配目标的锁；首次生成 ARM 锁使用 lib add/update 的同名 target 参数。准备会显式联网，后续 run/build 离线；缺资源时执行提示的准备命令，不改用系统解释器。target add 准备当前活动版本，锁定其它编译器版本的项目先准备并选择对应版本。
 
 已准备本地发行包时：
 
@@ -44,7 +60,7 @@ dever version
 dever skill path
 ```
 
-update 只访问内置官方发行源，先校验和准备，再切换活动版本；同版本完整 skill 随核心一起更新。失败保留原活动版本，不回退到未经验证的包。普通 check/test/run/build 不检查更新、不隐式联网。
+update 只访问内置官方发行源，先准备核心、同版本完整 skill，以及当前活动版本已安装的扩展，再切换活动版本。未使用的扩展不会一起下载；任一准备失败保留原活动版本。普通 check/test/run/build 不检查更新、不隐式联网。
 
 本仓库直接安装的 skill 在开始开发时先运行 `dever skill path` 并加载该版本的完整 skill，不必每个项目 git pull。也可以用 `dever skill install <新的AI技能目录>/dever-language` 安装稳定的薄入口，之后每次自动解析当前机器版本；已有目录不会被覆盖。不要把新入口嵌套装进已经存在的完整 skill 目录。
 
